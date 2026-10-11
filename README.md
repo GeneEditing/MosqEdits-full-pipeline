@@ -1,1 +1,1 @@
-# MosqEdits-server
+# MosqEdits full pipeline

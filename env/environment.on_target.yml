@@ -1,0 +1,11 @@
+name: crispron
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - numpy=1.26.4
+  - scipy=1.15.3
+  - biopython=1.83
+  - tensorflow-cpu=2.14
+  - viennarna=2.6.4

@@ -1,0 +1,641 @@
+#!/usr/bin/env python3
+
+import argparse
+import csv
+from pathlib import Path
+
+
+# ============================================================
+# Load intended target loci
+# ============================================================
+
+def load_guide_targets(path):
+    """
+    Load the intended genomic target locus for every guide
+    from the output of 01_generate_guides.py.
+
+    All coordinates are 1-based inclusive.
+
+    IMPORTANT:
+    Intended on-target identity is defined by genomic locus,
+    not by sequence identity or mismatch count.
+    """
+
+    targets = {}
+
+    with open(
+        path,
+        newline="",
+    ) as f:
+
+        reader = csv.DictReader(f)
+
+        required = {
+            "guide_id",
+            "chrom",
+            "strand",
+            "genomic_spacer_start",
+            "genomic_spacer_end",
+            "genomic_pam_start",
+            "genomic_pam_end",
+        }
+
+        missing = (
+            required
+            - set(reader.fieldnames or [])
+        )
+
+        if missing:
+
+            raise ValueError(
+                "Guide CSV missing columns: "
+                f"{sorted(missing)}"
+            )
+
+        for row in reader:
+
+            guide_id = (
+                row["guide_id"]
+                .strip()
+            )
+
+            if guide_id in targets:
+
+                raise ValueError(
+                    f"Duplicate guide_id: "
+                    f"{guide_id}"
+                )
+
+            strand = (
+                row["strand"]
+                .strip()
+            )
+
+            if strand not in {
+                "+",
+                "-",
+            }:
+
+                raise ValueError(
+                    f"{guide_id}: "
+                    f"unexpected strand {strand}"
+                )
+
+            targets[
+                guide_id
+            ] = {
+
+                "fasta_id":
+                    row[
+                        "chrom"
+                    ].strip(),
+
+                "strand":
+                    strand,
+
+                "protospacer_start":
+                    int(
+                        row[
+                            "genomic_spacer_start"
+                        ]
+                    ),
+
+                "protospacer_end":
+                    int(
+                        row[
+                            "genomic_spacer_end"
+                        ]
+                    ),
+
+                "pam_start":
+                    int(
+                        row[
+                            "genomic_pam_start"
+                        ]
+                    ),
+
+                "pam_end":
+                    int(
+                        row[
+                            "genomic_pam_end"
+                        ]
+                    ),
+            }
+
+    return targets
+
+
+# ============================================================
+# Intended on-target test
+# ============================================================
+
+def is_intended_on_target(
+    row,
+    target,
+):
+    """
+    A candidate is the intended on-target only if all of the
+    following match the guide's true target locus:
+
+        1. reference contig
+        2. strand
+        3. protospacer genomic coordinates
+        4. PAM genomic coordinates
+
+    Sequence identity and mismatch count are deliberately
+    NOT used.
+
+    Therefore, if a population SNP modifies the intended
+    target locus, that ALT candidate is also excluded from
+    the off-target pool.
+    """
+
+    if (
+        row["fasta_id"].strip()
+        != target["fasta_id"]
+    ):
+        return False
+
+    if (
+        row["strand"].strip()
+        != target["strand"]
+    ):
+        return False
+
+    if (
+        int(
+            row[
+                "protospacer_start_1based"
+            ]
+        )
+        != target[
+            "protospacer_start"
+        ]
+    ):
+        return False
+
+    if (
+        int(
+            row[
+                "protospacer_end_1based"
+            ]
+        )
+        != target[
+            "protospacer_end"
+        ]
+    ):
+        return False
+
+    if (
+        int(
+            row[
+                "pam_start_1based"
+            ]
+        )
+        != target[
+            "pam_start"
+        ]
+    ):
+        return False
+
+    if (
+        int(
+            row[
+                "pam_end_1based"
+            ]
+        )
+        != target[
+            "pam_end"
+        ]
+    ):
+        return False
+
+    return True
+
+
+# ============================================================
+# Main
+# ============================================================
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Exclude each guide's intended genomic "
+            "on-target locus from the merged "
+            "off-target candidate table."
+        )
+    )
+
+    parser.add_argument(
+        "--guides",
+        required=True,
+        type=Path,
+        help=(
+            "Guide CSV generated by "
+            "01_generate_guides.py."
+        ),
+    )
+
+    parser.add_argument(
+        "--candidates",
+        required=True,
+        type=Path,
+        help=(
+            "Merged candidate CSV generated by "
+            "06_merge_population_candidates.py."
+        ),
+    )
+
+    parser.add_argument(
+        "--output",
+        required=True,
+        type=Path,
+        help=(
+            "Final off-target-only candidate CSV."
+        ),
+    )
+
+    parser.add_argument(
+        "--excluded-output",
+        required=True,
+        type=Path,
+        help=(
+            "Audit CSV containing candidates "
+            "identified as intended on-target."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    # ========================================================
+    # Input validation
+    # ========================================================
+
+    if not args.guides.exists():
+
+        raise FileNotFoundError(
+            args.guides
+        )
+
+    if not args.candidates.exists():
+
+        raise FileNotFoundError(
+            args.candidates
+        )
+
+    # ========================================================
+    # Load guide targets
+    # ========================================================
+
+    targets = load_guide_targets(
+        args.guides
+    )
+
+    # ========================================================
+    # Output paths
+    # ========================================================
+
+    args.output.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    args.excluded_output.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    # ========================================================
+    # Counters
+    # ========================================================
+
+    total_rows = 0
+
+    kept_rows = 0
+    excluded_rows = 0
+
+    missing_guide = 0
+
+    excluded_by_source = {}
+
+    guides_with_excluded_target = set()
+
+    zero_mismatch_total = 0
+    zero_mismatch_excluded = 0
+    zero_mismatch_kept = 0
+
+    # ========================================================
+    # Process candidates
+    # ========================================================
+
+    with open(
+        args.candidates,
+        newline="",
+    ) as fin:
+
+        reader = csv.DictReader(fin)
+
+        required = {
+
+            "candidate_id",
+            "guide_id",
+            "source",
+
+            "fasta_id",
+            "strand",
+
+            "protospacer_start_1based",
+            "protospacer_end_1based",
+
+            "pam_start_1based",
+            "pam_end_1based",
+
+            "mismatch_count_20nt",
+        }
+
+        missing = (
+            required
+            - set(reader.fieldnames or [])
+        )
+
+        if missing:
+
+            raise ValueError(
+                "Candidate CSV missing columns: "
+                f"{sorted(missing)}"
+            )
+
+        fieldnames = list(
+            reader.fieldnames
+        ) + [
+            "is_intended_on_target"
+        ]
+
+        with open(
+            args.output,
+            "w",
+            newline="",
+        ) as fout, open(
+            args.excluded_output,
+            "w",
+            newline="",
+        ) as fexcluded:
+
+            writer_keep = csv.DictWriter(
+                fout,
+                fieldnames=fieldnames,
+            )
+
+            writer_excluded = csv.DictWriter(
+                fexcluded,
+                fieldnames=fieldnames,
+            )
+
+            writer_keep.writeheader()
+            writer_excluded.writeheader()
+
+            for row in reader:
+
+                total_rows += 1
+
+                guide_id = (
+                    row[
+                        "guide_id"
+                    ].strip()
+                )
+
+                mismatch = int(
+                    row[
+                        "mismatch_count_20nt"
+                    ]
+                )
+
+                # --------------------------------------------
+                # Audit zero-mismatch candidates
+                # --------------------------------------------
+
+                if mismatch == 0:
+
+                    zero_mismatch_total += 1
+
+                # --------------------------------------------
+                # Resolve intended target for this guide
+                # --------------------------------------------
+
+                target = targets.get(
+                    guide_id
+                )
+
+                if target is None:
+
+                    missing_guide += 1
+
+                    row[
+                        "is_intended_on_target"
+                    ] = 0
+
+                    writer_keep.writerow(
+                        row
+                    )
+
+                    kept_rows += 1
+
+                    if mismatch == 0:
+                        zero_mismatch_kept += 1
+
+                    continue
+
+                # --------------------------------------------
+                # Genomic-locus based exclusion
+                # --------------------------------------------
+
+                is_target = (
+                    is_intended_on_target(
+                        row,
+                        target,
+                    )
+                )
+
+                if is_target:
+
+                    row[
+                        "is_intended_on_target"
+                    ] = 1
+
+                    writer_excluded.writerow(
+                        row
+                    )
+
+                    excluded_rows += 1
+
+                    guides_with_excluded_target.add(
+                        guide_id
+                    )
+
+                    source = (
+                        row[
+                            "source"
+                        ].strip()
+                    )
+
+                    excluded_by_source[
+                        source
+                    ] = (
+                        excluded_by_source.get(
+                            source,
+                            0,
+                        )
+                        + 1
+                    )
+
+                    if mismatch == 0:
+
+                        zero_mismatch_excluded += 1
+
+                else:
+
+                    row[
+                        "is_intended_on_target"
+                    ] = 0
+
+                    writer_keep.writerow(
+                        row
+                    )
+
+                    kept_rows += 1
+
+                    if mismatch == 0:
+
+                        zero_mismatch_kept += 1
+
+    # ========================================================
+    # Final QC
+    # ========================================================
+
+    if (
+        kept_rows
+        + excluded_rows
+        != total_rows
+    ):
+
+        raise RuntimeError(
+            "Row accounting error: "
+            f"{kept_rows} + "
+            f"{excluded_rows} != "
+            f"{total_rows}"
+        )
+
+    missing_targets = (
+        set(targets)
+        - guides_with_excluded_target
+    )
+
+    # ========================================================
+    # Summary
+    # ========================================================
+
+    print("=" * 70)
+    print(
+        "Intended on-target exclusion complete"
+    )
+    print("=" * 70)
+
+    print(
+        f"Guides loaded:                "
+        f"{len(targets):,}"
+    )
+
+    print(
+        f"Input candidate rows:         "
+        f"{total_rows:,}"
+    )
+
+    print(
+        f"Excluded intended targets:    "
+        f"{excluded_rows:,}"
+    )
+
+    print(
+        f"Remaining off-target rows:    "
+        f"{kept_rows:,}"
+    )
+
+    print(
+        f"Missing guide mapping:        "
+        f"{missing_guide:,}"
+    )
+
+    print()
+
+    print(
+        f"Guides with target excluded:  "
+        f"{len(guides_with_excluded_target):,}"
+    )
+
+    print(
+        f"Guides with NO target found:  "
+        f"{len(missing_targets):,}"
+    )
+
+    if missing_targets:
+
+        print(
+            "First missing guide IDs:"
+        )
+
+        for guide_id in sorted(
+            missing_targets
+        )[:20]:
+
+            print(
+                f"  {guide_id}"
+            )
+
+    print()
+
+    print(
+        "Excluded rows by source:"
+    )
+
+    for source in sorted(
+        excluded_by_source
+    ):
+
+        print(
+            f"  {source}: "
+            f"{excluded_by_source[source]:,}"
+        )
+
+    print()
+
+    print(
+        f"0-mismatch rows before:       "
+        f"{zero_mismatch_total:,}"
+    )
+
+    print(
+        f"0-mismatch on-target removed: "
+        f"{zero_mismatch_excluded:,}"
+    )
+
+    print(
+        f"0-mismatch off-target kept:   "
+        f"{zero_mismatch_kept:,}"
+    )
+
+    print()
+
+    print(
+        f"Off-target output: "
+        f"{args.output}"
+    )
+
+    print(
+        f"Excluded audit:   "
+        f"{args.excluded_output}"
+    )
+
+
+if __name__ == "__main__":
+    main()

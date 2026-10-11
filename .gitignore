@@ -1,0 +1,18 @@
+# Large files downloaded separately; see README.md.
+/off_target/reference/AalbF3/GCA_018104305.1_AalbF3_genomic.fna
+/off_target/pam_ngg/checkpoints/rf_handcrafted_baseline.joblib
+/off_target/pam_agnostic/checkpoints/rf_handcrafted_baseline.joblib
+
+# Generated results.
+/results/*
+!/results/.gitkeep
+/off_target/results/
+/off_target/work/
+/on_target/results/
+
+# Python cache and local environments.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store

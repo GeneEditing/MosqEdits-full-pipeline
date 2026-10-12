@@ -2,11 +2,12 @@
 
 MosqEdits predicts and ranks gRNA on-target activity from a target-region FASTA, searches a matching reference genome for potential off-target sites, evaluates the effects of population SNPs, and produces an integrated guide-level results table.
 
-MosqEdits also provides a web interface for this pipeline. Users can upload a FASTA file or paste a target sequence, choose a reference genome and PAM, and submit a gRNA design and off-target analysis task.
+MosqEdits also provides a [web interface](https://mosqedits.org) for this pipeline. Users can upload a FASTA file or paste a target sequence, choose a reference genome and PAM, and submit a gRNA design and off-target analysis task.
 
-![MosqEdits website home page](img/mosqedits_website_homepage.png)
-
-*MosqEdits web interface for gRNA design and off-target analysis.*
+<p align="center">
+  <img src="img/mosqedits_website_homepage.png" alt="MosqEdits website home page" width="680"><br>
+  <em>MosqEdits web interface for gRNA design and off-target analysis.</em>
+</p>
 
 ## Workflow
 
